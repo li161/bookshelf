@@ -55,7 +55,44 @@ function addArchitecture(){
  const ceiling=new THREE.Mesh(new THREE.CylinderGeometry(9.2,11,.22,64),mat('#30271f'));ceiling.position.y=4.1;scene.add(ceiling)
  const ring=new THREE.Mesh(new THREE.TorusGeometry(8.7,.055,8,120),mat('#9a7951',.35,.6));ring.rotation.x=Math.PI/2;ring.position.y=3.8;scene.add(ring)
  for(let i=0;i<12;i++){const a=i/12*Math.PI*2;const lamp=new THREE.PointLight('#e5bd83',12,7,2);lamp.position.set(Math.cos(a)*7,3.4,Math.sin(a)*7);scene.add(lamp)}
- const stair=new THREE.Group();for(let i=0;i<18;i++){const step=new THREE.Mesh(new THREE.BoxGeometry(2.5,.13,.55),mat('#63472f'));step.position.set(-4+i*.18,-1.72+i*.13,-2.5-i*.24);step.rotation.y=-.12;stair.add(step)}scene.add(stair)
+ const stairWood=mat('#63472f'), stairEdge=mat('#9a7652',.48), stairMetal=mat('#30251d',.55,.25)
+ // Three independent curved staircases connect the lower gallery to the upper tiers.
+ const staircases=[{angle:-.28,radius:8.0,turn:1},{angle:2.82,radius:8.0,turn:1},{angle:1.48,radius:8.0,turn:-1}]
+ staircases.forEach((config,index)=>{
+  const flight=new THREE.Group(), railPointsA:THREE.Vector3[]=[],railPointsB:THREE.Vector3[]=[]
+  const steps=20,baseY=-1.82,stepRise=.105,stepAngle=.075*config.turn
+  for(let i=0;i<steps;i++){
+   const a=config.angle+i*stepAngle,r=config.radius
+   const step=new THREE.Mesh(new THREE.BoxGeometry(1.72,.13,.48),stairWood)
+   step.position.set(Math.cos(a)*r,baseY+i*stepRise,Math.sin(a)*r)
+   step.rotation.y=-a
+   step.castShadow=true;step.receiveShadow=true;flight.add(step)
+   const nosing=new THREE.Mesh(new THREE.BoxGeometry(1.74,.035,.055),stairEdge)
+   nosing.position.copy(step.position);nosing.position.y+=.065;nosing.rotation.y=-a;flight.add(nosing)
+   railPointsA.push(new THREE.Vector3(Math.cos(a)*(r-.82),baseY+i*stepRise+.78,Math.sin(a)*(r-.82)))
+   railPointsB.push(new THREE.Vector3(Math.cos(a)*(r+.82),baseY+i*stepRise+.78,Math.sin(a)*(r+.82)))
+   if(i%4===0){
+    for(const side of [-1,1]){
+     const post=new THREE.Mesh(new THREE.CylinderGeometry(.035,.045,.72,8),stairMetal)
+     post.position.set(Math.cos(a)*(r+side*.82),baseY+i*stepRise+.39,Math.sin(a)*(r+side*.82));flight.add(post)
+    }
+   }
+  }
+  ;[railPointsA,railPointsB].forEach(points=>{
+   const curve=new THREE.CatmullRomCurve3(points)
+   const rail=new THREE.Mesh(new THREE.TubeGeometry(curve,48,.045,8,false),stairEdge)
+   rail.castShadow=true;flight.add(rail)
+  })
+  // Resting landings at both ends make each flight read as usable architecture.
+  const landing=new THREE.Mesh(new THREE.BoxGeometry(2.15,.16,1.15),stairWood)
+  const endA=config.angle,endB=config.angle+(steps-1)*stepAngle
+  landing.position.set(Math.cos(endB)*config.radius,baseY+steps*stepRise,Math.sin(endB)*config.radius)
+  landing.rotation.y=-endB;landing.castShadow=true;landing.receiveShadow=true;flight.add(landing)
+  const foot=new THREE.Mesh(new THREE.BoxGeometry(2.15,.16,1.15),stairWood)
+  foot.position.set(Math.cos(endA)*config.radius,baseY-.04,Math.sin(endA)*config.radius)
+  foot.rotation.y=-endA;flight.add(foot)
+  scene.add(flight)
+ })
 }
 function addDust(){const count=900,positions=new Float32Array(count*3);for(let i=0;i<count;i++){positions[i*3]=(Math.random()-.5)*19;positions[i*3+1]=Math.random()*8-2;positions[i*3+2]=(Math.random()-.5)*9}
  const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.BufferAttribute(positions,3));const m=new THREE.PointsMaterial({color:'#e6d2b1',size:.018,transparent:true,opacity:.45});dust=new THREE.Points(geo,m);scene.add(dust)}
