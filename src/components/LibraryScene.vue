@@ -82,6 +82,8 @@ function init(){
  renderer.domElement.addEventListener('wheel',onCarouselWheel,{passive:false})
  window.addEventListener('keydown',onCarouselKey)
  resizeObserver=new ResizeObserver(onResize);resizeObserver.observe(host.value)
+ setMode(props.mode)
+ setTime(props.selectedTime)
  animate()
 }
 function onResize(){if(!host.value)return;camera.aspect=host.value.clientWidth/host.value.clientHeight;camera.updateProjectionMatrix();renderer.setSize(host.value.clientWidth,host.value.clientHeight)}
