@@ -4,7 +4,7 @@ import LibraryScene from './components/LibraryScene.vue'
 import { books, type BookSeed } from './data/books'
 import { useLibraryStore } from './stores/library'
 const store=useLibraryStore()
-const mode=ref('INFINITE LIBRARY'),time=ref('AFTERNOON'),active=ref<BookSeed|null>(null),opened=ref<BookSeed|null>(null),search=ref(''),showSearch=ref(false),showShelf=ref(false),showSettings=ref(false),showGalaxy=ref(false),showArchive=ref(false),page=ref(0),sound=ref(false)
+const mode=ref('FLOATING BOOKS'),time=ref('AFTERNOON'),active=ref<BookSeed|null>(null),opened=ref<BookSeed|null>(null),search=ref(''),showSearch=ref(false),showShelf=ref(false),showSettings=ref(false),showGalaxy=ref(false),showArchive=ref(false),page=ref(0),sound=ref(false)
 const scene=ref<InstanceType<typeof LibraryScene>>()
 const filtered=computed(()=>books.filter(b=>(b.title+' '+b.author+' '+b.genre).toLowerCase().includes(search.value.toLowerCase())))
 const favorite=computed(()=>active.value?store.favorites.includes(active.value.id):false)
@@ -30,8 +30,8 @@ function discoverSecret(){store.archiveUnlocked=true;store.discover('secret-door
    </nav>
   </header>
   <transition name="fade"><section v-if="showSearch" class="search-panel"><input v-model="search" autofocus placeholder="Search titles, authors, worlds…" /><button @click="showSearch=false">ESC</button><div class="search-results"><button v-for="b in filtered.slice(0,5)" :key="b.id" @click="choose(b);scene?.openBook(b.id);showSearch=false"><span>{{b.title}}</span><small>{{b.author}} · {{b.genre}}</small></button></div></section></transition>
-  <section class="intro-copy" v-if="!isWorld"><div class="eyebrow"><span></span> A PLACE BETWEEN STORIES</div><h1>Somewhere,<br><em>a story is waiting.</em></h1><p>Wander through impossible shelves. Find a book.<br>Open a door to another world.</p><button class="explore-btn" @click="go('INFINITE LIBRARY')">EXPLORE THE LIBRARY <span>↗</span></button></section>
-  <aside class="book-info" v-if="active&&!isWorld">
+  <section class="intro-copy" v-if="!isWorld && mode !== 'FLOATING BOOKS'"><div class="eyebrow"><span></span> A PLACE BETWEEN STORIES</div><h1>Somewhere,<br><em>a story is waiting.</em></h1><p>Wander through impossible shelves. Find a book.<br>Open a door to another world.</p><button class="explore-btn" @click="go('INFINITE LIBRARY')">EXPLORE THE LIBRARY <span>↗</span></button></section>
+  <aside class="book-info" v-if="active&&!isWorld && mode !== 'FLOATING BOOKS'">
    <button class="close-info" @click="active=null">×</button><div class="info-label">SELECTED VOLUME <span>NO. {{String(books.findIndex(x=>x.id===active?.id)+1).padStart(2,'0')}}</span></div>
    <div class="mini-book" :style="{'--book-color':active.color,'--book-accent':active.accent}"><div class="mini-spine"></div><div class="mini-cover"><small>BOOKVERSE EDITION</small><b>{{active.title}}</b><i>{{active.author}}</i><span>✳</span></div></div>
    <div class="info-genre">{{active.genre}} <span>·</span> {{active.pages}} PAGES</div><h2>{{active.title}}</h2><p>{{active.description}}</p>
