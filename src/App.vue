@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import * as THREE from 'three'
+import { createUnderwaterStrawberryWorld } from './underwater-strawberries'
 
 type Station = 'studio' | 'blueberry' | 'strawberry' | 'toast' | 'decorate' | 'table'
 const station = ref<Station>('studio')
@@ -29,6 +30,7 @@ let world: THREE.Group
 let carousel: THREE.Group
 let raycaster: THREE.Raycaster
 let pointer: THREE.Vector2
+let underwater: ReturnType<typeof createUnderwaterStrawberryWorld> | undefined
 let animationId = 0
 let resizeObserver: ResizeObserver | undefined
 let downX = 0
@@ -205,6 +207,7 @@ function setStation(next: Station) {
     table: 'Your breakfast is ready for its close-up'
   } as Record<Station, string>)[next]
   if (next === 'toast') focusToast(toastIndex.value)
+  if (underwater) { underwater.root.visible = next === 'strawberry'; world.visible = next !== 'strawberry'; scene.background = new THREE.Color(next === 'strawberry' ? '#030303' : '#d9c8ad'); scene.fog = next === 'strawberry' ? new THREE.Fog('#030303',9,22) : new THREE.Fog('#d9c8ad',12,25); if(next === 'strawberry'){camera.position.set(0,.05,11.5);camera.lookAt(0,0,0)}else{camera.position.set(0,5.4,10.5);camera.lookAt(0,1.1,0)} }
 }
 function focusToast(index: number) {
   toastIndex.value = (index + toastNames.length) % toastNames.length
@@ -285,6 +288,7 @@ function nextToast(dir: number) { focusToast(toastIndex.value + dir); toastDone.
 function animate() {
   animationId = requestAnimationFrame(animate)
   const t = performance.now() * 0.001
+  underwater?.update(t)
   fruitMeshes.forEach((m, i) => { if (m.parent && m.parent.position.y > -1) m.parent.position.y = 1.28 + Math.sin(t * 1.1 + i) * 0.025 })
   if (carousel) carousel.children.forEach((o, i) => { o.position.y = 1.15 + Math.sin(t * 1.4 + i * 0.8) * 0.025 })
   renderer?.render(scene, camera)
@@ -310,6 +314,7 @@ onMounted(() => {
   renderer.domElement.addEventListener('pointermove', pointerMove)
   canvasHost.value.appendChild(renderer.domElement)
   createKitchen()
+  underwater = createUnderwaterStrawberryWorld(scene)
   resize()
   resizeObserver = new ResizeObserver(resize)
   resizeObserver.observe(canvasHost.value)
@@ -330,7 +335,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="bakery-app">
+  <main class="bakery-app" :class="{ 'underwater-mode': station === 'strawberry' }">
     <div ref="canvasHost" class="scene-host"></div>
     <div class="scene-wash"></div>
     <header class="topbar">
