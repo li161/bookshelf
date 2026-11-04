@@ -49,7 +49,7 @@ export function createUnderwaterStrawberryWorld(scene: THREE.Scene) {
   })
 
   const bubbles = new THREE.InstancedMesh(new THREE.SphereGeometry(1,10,8), new THREE.MeshPhysicalMaterial({ color:'#d8e8e9',roughness:.04,metalness:.05,transmission:.88,thickness:.25,transparent:true,opacity:.62,clearcoat:1 }), 150)
-  const bubbleData = []
+  const bubbleData: Array<{ x: number; y: number; z: number; speed: number; scale: number }> = []
   const dummy = new THREE.Object3D()
   for(let i=0;i<150;i++) {
     const b={x:(Math.random()-.5)*8.8,y:-3.7+Math.random()*7,z:-.7+Math.random()*1.5,speed:.25+Math.random()*.75,scale:.018+Math.random()*.045}
