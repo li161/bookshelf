@@ -1,398 +1,347 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as THREE from 'three'
-import { createUnderwaterStrawberryWorld } from './underwater-strawberries'
 
-type Station = 'studio' | 'blueberry' | 'strawberry' | 'toast' | 'decorate' | 'table'
-const station = ref<Station>('studio')
-const hint = ref('Drag to look around · Click ingredients to interact')
-const berries = ref(0)
-const strawberries = ref(0)
-const jamMade = ref(false)
-const toastIndex = ref(0)
-const jamAmount = ref(0)
-const toastNames = ['HEART','STAR','BEAR','FLOWER','CLOUD']
-const currentToast = computed(() => toastNames[toastIndex.value])
-const toastDone = ref(false)
-const saved = ref(false)
-const stageTitle = computed(() => ({
-  studio: 'A little kitchen, a lot of imagination.',
-  blueberry: 'Turn a handful of berries into something wonderful.',
-  strawberry: 'Sweet, bright, and made by hand.',
-  toast: 'Choose a shape. Make it yours.',
-  decorate: 'Spread a little happiness.',
-  table: 'Your very own breakfast moment.'
-}[station.value]))
+type Hat = { name: string; subtitle: string; price: number; color: string; ribbon: string; detail: string }
+const hats: Hat[] = [
+  { name: 'THE SOL', subtitle: 'WIDE BRIM · NATURAL RAFFIA', price: 389, color: '#c9a36a', ribbon: '#bd684d', detail: 'A generous brim for long, slow afternoons.' },
+  { name: 'THE COAST', subtitle: 'CLASSIC PANAMA · HANDWOVEN', price: 459, color: '#dfc58e', ribbon: '#526b60', detail: 'Lightweight structure, made for salt air.' },
+  { name: 'THE GARDEN', subtitle: 'SOFT CLOCHE · VINTAGE SHAPE', price: 429, color: '#b78b58', ribbon: '#d1a6a0', detail: 'A softer silhouette with a little romance.' },
+  { name: 'THE NOMAD', subtitle: 'TRAVELLER · EVERYDAY SHADE', price: 359, color: '#b99a70', ribbon: '#4d5e73', detail: 'Your easy companion from city to shoreline.' },
+]
+const ribbons = ['#bd684d', '#526b60', '#d1a6a0', '#4d5e73', '#e1bd68']
+const selected = ref(0)
+const ribbonIndex = ref(0)
+const cartCount = ref(0)
+const cartOpen = ref(false)
+const customOpen = ref(false)
+const toast = ref('')
+const quantity = ref(1)
+const current = computed(() => hats[selected.value])
+const cartTotal = computed(() => current.value.price * quantity.value)
+const hatHost = ref<HTMLDivElement | null>(null)
 let renderer: THREE.WebGLRenderer | undefined
 let scene: THREE.Scene
 let camera: THREE.PerspectiveCamera
-let world: THREE.Group
-let carousel: THREE.Group
-let raycaster: THREE.Raycaster
-let pointer: THREE.Vector2
-let underwater: ReturnType<typeof createUnderwaterStrawberryWorld> | undefined
-let animationId = 0
+let stage: THREE.Group
+let mainHat: THREE.Group
+let sideHats: THREE.Group[] = []
+let ribbonMaterial: THREE.MeshStandardMaterial
+let raf = 0
 let resizeObserver: ResizeObserver | undefined
-let downX = 0
-let downY = 0
+let dragging = false
 let moved = false
-let isDragging = false
-const canvasHost = ref<HTMLDivElement>()
-const interactive: THREE.Object3D[] = []
-const fruitMeshes: THREE.Mesh[] = []
-const toastMeshes: THREE.Group[] = []
-const tempObjects: THREE.Object3D[] = []
+let lastX = 0
+let lastY = 0
+let targetRotation = 0
+let targetTilt = -0.22
+let pointerX = 0
 
-function material(color: string, roughness = 0.72, metalness = 0) {
-  return new THREE.MeshStandardMaterial({ color, roughness, metalness })
+function mat(color: string, roughness = 0.82) {
+  return new THREE.MeshStandardMaterial({ color, roughness, metalness: 0.02 })
 }
-function addMesh(geometry: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number, parent: THREE.Object3D = world) {
-  const mesh = new THREE.Mesh(geometry, mat)
-  mesh.position.set(x, y, z)
-  mesh.castShadow = true
-  mesh.receiveShadow = true
-  parent.add(mesh)
-  return mesh
-}
-function makeFruit(color: string, x: number, z: number, scale = 1, strawberry = false) {
+function makeHat(index: number, scale = 1) {
   const group = new THREE.Group()
-  group.position.set(x, 1.28, z)
-  const body = addMesh(new THREE.SphereGeometry(0.19 * scale, 24, 18), material(color, 0.3), 0, 0, 0, group)
-  body.scale.set(strawberry ? 0.82 : 1, strawberry ? 1.05 : 0.9, strawberry ? 0.82 : 1)
-  if (strawberry) {
-    const leaf = addMesh(new THREE.ConeGeometry(0.075 * scale, 0.12 * scale, 5), material('#426b3b'), 0, 0.19 * scale, 0, group)
-    leaf.rotation.z = Math.PI
-  } else {
-    const bloom = addMesh(new THREE.SphereGeometry(0.035 * scale, 10, 8), material('#91a76d'), 0, 0.17 * scale, 0, group)
-    bloom.scale.set(1, 0.4, 1)
+  const brimShape = new THREE.Shape()
+  brimShape.absellipse(0, 0, 1.75, 1.52, 0, Math.PI * 2, false, 0)
+  const hole = new THREE.Path()
+  hole.absellipse(0, 0, 0.66, 0.61, 0, Math.PI * 2, true, 0)
+  brimShape.holes.push(hole)
+  const brimGeo = new THREE.ExtrudeGeometry(brimShape, { depth: 0.075, bevelEnabled: true, bevelSegments: 3, bevelSize: 0.035, bevelThickness: 0.035, curveSegments: 64 })
+  const straw = mat(hats[index].color)
+  const brim = new THREE.Mesh(brimGeo, straw)
+  brim.rotation.x = -Math.PI / 2
+  brim.position.y = 0.12
+  brim.castShadow = true
+  brim.receiveShadow = true
+  group.add(brim)
+
+  const profile = [
+    new THREE.Vector2(0.62, 0.12), new THREE.Vector2(0.64, 0.2),
+    new THREE.Vector2(0.59, 0.38), new THREE.Vector2(0.52, 0.66),
+    new THREE.Vector2(0.45, 0.91), new THREE.Vector2(0.36, 1.04),
+    new THREE.Vector2(0.18, 1.09), new THREE.Vector2(0, 1.1),
+  ]
+  const crownGeo = new THREE.LatheGeometry(profile, 64)
+  const crown = new THREE.Mesh(crownGeo, straw)
+  crown.position.y = 0.12
+  crown.castShadow = true
+  crown.receiveShadow = true
+  group.add(crown)
+
+  ribbonMaterial = mat(hats[index].ribbon, 0.48)
+  const band = new THREE.Mesh(new THREE.CylinderGeometry(0.603, 0.603, 0.16, 64, 1, true), ribbonMaterial)
+  band.position.y = 0.48
+  band.castShadow = true
+  group.add(band)
+  const bow = new THREE.Group()
+  bow.position.set(0.55, 0.51, 0.23)
+  const knot = new THREE.Mesh(new THREE.SphereGeometry(0.09, 20, 16), ribbonMaterial)
+  knot.scale.set(1, 0.7, 0.65)
+  bow.add(knot)
+  const loopGeo = new THREE.SphereGeometry(0.16, 20, 16)
+  const loop1 = new THREE.Mesh(loopGeo, ribbonMaterial); loop1.scale.set(1.3, 0.55, 0.42); loop1.position.x = 0.19; loop1.rotation.z = -0.35
+  const loop2 = new THREE.Mesh(loopGeo, ribbonMaterial); loop2.scale.set(1.3, 0.55, 0.42); loop2.position.x = -0.19; loop2.rotation.z = 0.35
+  bow.add(loop1, loop2)
+  group.add(bow)
+
+  // Fine concentric straw stitching on the brim.
+  const stitchMat = new THREE.MeshStandardMaterial({ color: '#8b693f', roughness: 0.95, transparent: true, opacity: 0.36 })
+  for (let r = 1.08; r <= 1.62; r += 0.12) {
+    const line = new THREE.Mesh(new THREE.TorusGeometry(r, 0.008, 5, 100), stitchMat)
+    line.rotation.x = Math.PI / 2
+    line.position.y = 0.205
+    group.add(line)
   }
-  group.userData.kind = strawberry ? 'strawberry' : 'blueberry'
-  group.userData.baseY = group.position.y
-  world.add(group)
-  interactive.push(group)
-  fruitMeshes.push(body)
+  group.scale.setScalar(scale)
   return group
 }
-function shapeFor(name: string) {
-  const s = new THREE.Shape()
-  if (name === 'HEART') {
-    s.moveTo(0, -0.34)
-    s.bezierCurveTo(-0.12, -0.2, -0.55, 0.08, -0.48, 0.39)
-    s.bezierCurveTo(-0.42, 0.72, -0.06, 0.69, 0, 0.42)
-    s.bezierCurveTo(0.08, 0.72, 0.44, 0.7, 0.49, 0.38)
-    s.bezierCurveTo(0.55, 0.05, 0.15, -0.22, 0, -0.34)
-  } else if (name === 'STAR') {
-    for (let i = 0; i < 10; i++) {
-      const a = Math.PI / 2 + i * Math.PI / 5
-      const r = i % 2 === 0 ? 0.57 : 0.25
-      const x = Math.cos(a) * r
-      const y = Math.sin(a) * r
-      if (i === 0) s.moveTo(x, y); else s.lineTo(x, y)
-    }
-    s.closePath()
-  } else if (name === 'BEAR') {
-    s.absellipse(0, -0.04, 0.43, 0.43, 0, Math.PI * 2, false, 0)
-    s.moveTo(-0.25, 0.28); s.absellipse(-0.29, 0.34, 0.15, 0.15, 0, Math.PI * 2, false, 0)
-    s.moveTo(0.43, 0.28); s.absellipse(0.29, 0.34, 0.15, 0.15, 0, Math.PI * 2, false, 0)
-  } else if (name === 'FLOWER') {
-    for (let i = 0; i < 10; i++) {
-      const a = i * Math.PI / 5
-      const r = i % 2 === 0 ? 0.52 : 0.37
-      const x = Math.cos(a) * r, y = Math.sin(a) * r
-      if (i === 0) s.moveTo(x, y); else s.lineTo(x, y)
-    }
-    s.closePath()
-  } else {
-    s.moveTo(-0.48, -0.12); s.bezierCurveTo(-0.55, 0.16, -0.31, 0.3, -0.12, 0.2)
-    s.bezierCurveTo(-0.02, 0.54, 0.39, 0.48, 0.39, 0.2)
-    s.bezierCurveTo(0.66, 0.11, 0.59, -0.26, 0.3, -0.27)
-    s.bezierCurveTo(0.14, -0.5, -0.21, -0.43, -0.26, -0.26)
-    s.bezierCurveTo(-0.39, -0.32, -0.5, -0.25, -0.48, -0.12)
-  }
-  return s
-}
-function makeToast(name: string, index: number) {
-  const group = new THREE.Group()
-  const crustGeo = new THREE.ExtrudeGeometry(shapeFor(name), { depth: 0.16, bevelEnabled: true, bevelSegments: 3, steps: 1, bevelSize: 0.055, bevelThickness: 0.055, curveSegments: 12 })
-  const crust = addMesh(crustGeo, material('#9b572e', 0.88), 0, 0, 0, group)
-  crust.rotation.x = -Math.PI / 2
-  const crumbGeo = new THREE.ExtrudeGeometry(shapeFor(name), { depth: 0.17, bevelEnabled: true, bevelSegments: 3, steps: 1, bevelSize: 0.035, bevelThickness: 0.025, curveSegments: 12 })
-  const crumb = addMesh(crumbGeo, material('#e8b96f', 0.94), 0, 0.045, 0, group)
-  crumb.rotation.x = -Math.PI / 2
-  group.position.set((index - 2) * 1.42, 1.2, -0.25)
-  group.scale.setScalar(index === 2 ? 1.05 : 0.72)
-  group.userData.kind = 'toast'
-  group.userData.index = index
-  carousel.add(group)
-  interactive.push(group)
-  toastMeshes.push(group)
-  return group
-}
-function createKitchen() {
+function setupScene() {
+  if (!hatHost.value) return
   scene = new THREE.Scene()
-  scene.background = new THREE.Color('#d9c8ad')
-  scene.fog = new THREE.Fog('#d9c8ad', 12, 25)
-  camera = new THREE.PerspectiveCamera(38, 1, 0.1, 80)
-  camera.position.set(0, 5.4, 10.5)
-  camera.lookAt(0, 1.1, 0)
-  world = new THREE.Group()
-  scene.add(world)
-  const hemi = new THREE.HemisphereLight('#fff3dd', '#806044', 2.0)
-  scene.add(hemi)
-  const sun = new THREE.DirectionalLight('#fff0d3', 3.1)
-  sun.position.set(-4, 9, 5); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048)
-  scene.add(sun)
-  const fill = new THREE.PointLight('#fff8ec', 70, 18)
-  fill.position.set(4, 4, -3); scene.add(fill)
-  const floor = addMesh(new THREE.PlaneGeometry(40, 40), material('#c8b394'), 0, 0, 0)
-  floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true
-  const counter = addMesh(new THREE.BoxGeometry(8.8, 0.32, 3.3), material('#8a5b3c'), 0, 0.95, 0)
-  const edge = addMesh(new THREE.BoxGeometry(8.9, 0.09, 3.38), material('#c59b6b'), 0, 1.15, 0)
-  const back = addMesh(new THREE.BoxGeometry(9, 3.2, 0.18), material('#eee2ce'), 0, 2.7, -2.25)
-  back.castShadow = false
-  // Window and warm kitchen details
-  const windowFrame = material('#6d503b')
-  addMesh(new THREE.BoxGeometry(2.6, 1.8, 0.1), windowFrame, -2.7, 3.2, -2.08)
-  const glass = addMesh(new THREE.PlaneGeometry(2.42, 1.62), new THREE.MeshStandardMaterial({ color: '#b7d0ce', roughness: 0.2, metalness: 0.1, emissive: '#6e9a9c', emissiveIntensity: 0.12 }), -2.7, 3.2, -2.01)
-  const shelf = addMesh(new THREE.BoxGeometry(3.6, 0.12, 0.48), material('#80583c'), 2.3, 3.25, -1.98)
-  // Jam pot
-  const pot = new THREE.Group()
-  pot.position.set(1.85, 1.35, 0.05)
-  const potBody = addMesh(new THREE.CylinderGeometry(0.54, 0.48, 0.52, 40, 1, true), new THREE.MeshStandardMaterial({ color: '#b66a4e', roughness: 0.32, metalness: 0.55, side: THREE.DoubleSide }), 0, 0, 0, pot)
-  const potBase = addMesh(new THREE.CylinderGeometry(0.48, 0.48, 0.07, 40), material('#a95e43', 0.3, 0.6), 0, -0.26, 0, pot)
-  const jam = addMesh(new THREE.CylinderGeometry(0.46, 0.46, 0.18, 40), material('#54335e', 0.25), 0, 0.12, 0, pot)
-  pot.userData.kind = 'pot'
-  world.add(pot); interactive.push(pot)
-  // Glass jar
-  const jar = new THREE.Group()
-  jar.position.set(3.15, 1.25, 0.3)
-  const jarGlass = new THREE.MeshPhysicalMaterial({ color: '#f1eadb', roughness: 0.08, transmission: 0.72, thickness: 0.18, transparent: true, opacity: 0.55 })
-  addMesh(new THREE.CylinderGeometry(0.3, 0.28, 0.72, 32, 1, true), jarGlass, 0, 0, 0, jar)
-  addMesh(new THREE.CylinderGeometry(0.27, 0.27, 0.035, 32), material('#5d365f', 0.3), 0, -0.24, 0, jar)
-  addMesh(new THREE.CylinderGeometry(0.32, 0.32, 0.09, 32), material('#c5a36e', 0.28, 0.5), 0, 0.4, 0, jar)
-  jar.userData.kind = 'jar'; world.add(jar); interactive.push(jar)
-  // Fruit cluster
-  for (let i = 0; i < 12; i++) {
-    const a = i * 2.4
-    makeFruit('#344a85', -2.8 + Math.cos(a) * 0.6, 0.45 + Math.sin(a) * 0.42, 0.8 + (i % 3) * 0.1)
-  }
-  for (let i = 0; i < 6; i++) {
-    const a = i * 2.1
-    makeFruit('#c93f42', -3.2 + Math.cos(a) * 0.4, -0.45 + Math.sin(a) * 0.34, 0.95, true)
-  }
-  // Flour bowl and bread board
-  const bowl = addMesh(new THREE.CylinderGeometry(0.48, 0.36, 0.16, 40), material('#e4d6bf'), 0.05, 1.3, 0.55)
-  bowl.userData.kind = 'bowl'; interactive.push(bowl)
-  carousel = new THREE.Group()
-  carousel.position.set(-0.1, 0, -0.2)
-  world.add(carousel)
-  toastMeshes.length = 0
-  ;['HEART','STAR','BEAR','FLOWER','CLOUD'].forEach((name, i) => makeToast(name, i))
-  // Soft kitchen props
-  for (let i = 0; i < 3; i++) {
-    const jarProp = addMesh(new THREE.CylinderGeometry(0.16, 0.16, 0.5, 24), new THREE.MeshPhysicalMaterial({ color: '#d7c5a8', roughness: 0.2, transmission: 0.45, transparent: true, opacity: 0.6 }), -0.9 + i * 0.48, 1.42, -1.45)
-    jarProp.scale.set(1, 1 + i * 0.2, 1)
-  }
-  raycaster = new THREE.Raycaster()
-  pointer = new THREE.Vector2()
-}
-function setStation(next: Station) {
-  station.value = next
-  hint.value = ({
-    studio: 'Explore the counter · Click the berries, pot, toast or jar',
-    blueberry: 'Pick the blueberries, then press the wooden spoon to make jam',
-    strawberry: 'Choose the strawberries and make a bright berry preserve',
-    toast: 'Drag the carousel or tap a toast to bring it forward',
-    decorate: 'Choose a jam, then drag across the toast to spread it',
-    table: 'Your breakfast is ready for its close-up'
-  } as Record<Station, string>)[next]
-  if (next === 'toast') focusToast(toastIndex.value)
-  if (underwater) { underwater.root.visible = next === 'strawberry'; world.visible = next !== 'strawberry'; scene.background = new THREE.Color(next === 'strawberry' ? '#030303' : '#d9c8ad'); scene.fog = next === 'strawberry' ? new THREE.Fog('#030303',9,22) : new THREE.Fog('#d9c8ad',12,25); if(next === 'strawberry'){camera.position.set(0,.05,11.5);camera.lookAt(0,0,0)}else{camera.position.set(0,5.4,10.5);camera.lookAt(0,1.1,0)} }
-}
-function focusToast(index: number) {
-  toastIndex.value = (index + toastNames.length) % toastNames.length
-  toastMeshes.forEach((t, i) => {
-    const offset = ((i - toastIndex.value + 2 + 5) % 5) - 2
-    t.position.x = offset * 1.55
-    t.position.z = -0.1 - Math.abs(offset) * 0.12
-    const target = offset === 0 ? 1.12 : 0.7 - Math.abs(offset) * 0.06
-    t.scale.setScalar(target)
-    t.rotation.y = offset * -0.13
-  })
-}
-function handleClick(event: PointerEvent) {
-  if (!renderer || !canvasHost.value || moved) return
-  const rect = renderer.domElement.getBoundingClientRect()
-  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
-  pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
-  raycaster.setFromCamera(pointer, camera)
-  const hits = raycaster.intersectObjects(interactive, true)
-  if (!hits.length) return
-  let obj: THREE.Object3D | null = hits[0].object
-  while (obj && !obj.userData.kind && obj.parent) obj = obj.parent
-  if (!obj) return
-  const kind = obj.userData.kind
-  if (kind === 'blueberry') {
-    berries.value++
-    hint.value = 'Blueberry collected · ' + berries.value + ' / 12'
-    obj.position.y = -2
-  } else if (kind === 'strawberry') {
-    strawberries.value++
-    hint.value = 'Strawberry collected · ' + strawberries.value + ' / 6'
-    obj.position.y = -2
-  } else if (kind === 'pot' || kind === 'bowl') {
-    jamMade.value = true
-    jamAmount.value = Math.min(100, jamAmount.value + 25)
-    hint.value = 'Stirring… glossy berry jam is coming together.'
-    obj.rotation.y += Math.PI * 1.5
-  } else if (kind === 'jar') {
-    jamMade.value = true
-    jamAmount.value = 100
-    hint.value = 'Jar filled! Your handmade berry preserve is ready.'
-  } else if (kind === 'toast') {
-    focusToast(Number(obj.userData.index))
-    toastDone.value = true
-    hint.value = toastNames[toastIndex.value] + ' toast selected · ready to decorate'
-  }
-}
-function pointerDown(e: PointerEvent) {
-  downX = e.clientX; downY = e.clientY; moved = false; isDragging = true
-}
-function pointerMove(e: PointerEvent) {
-  if (!isDragging || !renderer) return
-  const dx = e.clientX - downX
-  const dy = e.clientY - downY
-  if (Math.abs(dx) + Math.abs(dy) > 5) moved = true
-  if (moved) {
-    if (station.value === 'toast') {
-      const step = Math.round(dx / 100)
-      if (step !== 0) { focusToast(toastIndex.value - step); downX = e.clientX }
-    } else {
-      if (station.value === 'strawberry' && underwater) underwater.root.rotation.y += dx * 0.003
-      else world.rotation.y += dx * 0.003
-      camera.position.y = THREE.MathUtils.clamp(camera.position.y - dy * 0.006, 3.7, 7)
-      camera.lookAt(0, 1.1, 0)
-      downX = e.clientX; downY = e.clientY
-    }
-  }
-}
-function pointerUp(e: PointerEvent) {
-  isDragging = false
-  if (!moved) handleClick(e)
-}
-function spreadJam() {
-  jamAmount.value = Math.min(100, jamAmount.value + 20)
-  toastDone.value = true
-  hint.value = 'A glossy layer of berry jam spreads across the toast.'
-}
-function nextToast(dir: number) { focusToast(toastIndex.value + dir); toastDone.value = true }
-function animate() {
-  animationId = requestAnimationFrame(animate)
-  const t = performance.now() * 0.001
-  underwater?.update(t)
-  fruitMeshes.forEach((m, i) => { if (m.parent && m.parent.position.y > -1) m.parent.position.y = 1.28 + Math.sin(t * 1.1 + i) * 0.025 })
-  if (carousel) carousel.children.forEach((o, i) => { o.position.y = 1.15 + Math.sin(t * 1.4 + i * 0.8) * 0.025 })
-  renderer?.render(scene, camera)
-}
-function resize() {
-  if (!renderer || !canvasHost.value) return
-  const w = canvasHost.value.clientWidth, h = canvasHost.value.clientHeight
-  renderer.setSize(w, h, false)
-  camera.aspect = w / h; camera.updateProjectionMatrix()
-}
-onMounted(() => {
-  if (!canvasHost.value) return
+  scene.background = new THREE.Color('#d7c9ae')
+  camera = new THREE.PerspectiveCamera(34, 1, 0.1, 100)
+  camera.position.set(0, 4.1, 8.8)
+  camera.lookAt(0, 0.45, 0)
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false })
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.8))
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
   renderer.shadowMap.enabled = true
   renderer.shadowMap.type = THREE.PCFSoftShadowMap
   renderer.outputColorSpace = THREE.SRGBColorSpace
   renderer.toneMapping = THREE.ACESFilmicToneMapping
-  renderer.toneMappingExposure = 1.12
-  renderer.domElement.className = 'bakery-canvas'
-  renderer.domElement.addEventListener('pointerdown', pointerDown)
-  renderer.domElement.addEventListener('pointerup', pointerUp)
-  renderer.domElement.addEventListener('pointermove', pointerMove)
-  canvasHost.value.appendChild(renderer.domElement)
-  createKitchen()
-  underwater = createUnderwaterStrawberryWorld(scene)
+  renderer.toneMappingExposure = 1.18
+  renderer.domElement.className = 'hat-canvas'
+  hatHost.value.appendChild(renderer.domElement)
+
+  const hemi = new THREE.HemisphereLight('#fff5df', '#8c7252', 2.1)
+  scene.add(hemi)
+  const sun = new THREE.DirectionalLight('#fff1d3', 3.5)
+  sun.position.set(-4, 8, 5)
+  sun.castShadow = true
+  sun.shadow.mapSize.set(2048, 2048)
+  sun.shadow.camera.left = -7; sun.shadow.camera.right = 7; sun.shadow.camera.top = 7; sun.shadow.camera.bottom = -7
+  scene.add(sun)
+  const rim = new THREE.DirectionalLight('#fff8e8', 1.6)
+  rim.position.set(5, 3, -4)
+  scene.add(rim)
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), mat('#d7c9ae'))
+  floor.rotation.x = -Math.PI / 2
+  floor.position.y = -0.12
+  floor.receiveShadow = true
+  scene.add(floor)
+
+  stage = new THREE.Group()
+  scene.add(stage)
+  const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(2.5, 2.7, 0.16, 96), mat('#eee3cf'))
+  pedestal.position.y = -0.05
+  pedestal.receiveShadow = true
+  stage.add(pedestal)
+  mainHat = makeHat(0, 1)
+  mainHat.position.y = 0.12
+  stage.add(mainHat)
+  sideHats = [-1, 1].map((side) => {
+    const g = makeHat(side < 0 ? 3 : 1, 0.43)
+    g.position.set(side * 3.15, 0.12, -0.9)
+    g.rotation.y = side * -0.35
+    stage.add(g)
+    return g
+  })
+  const shadow = new THREE.Mesh(new THREE.CircleGeometry(2.8, 64), new THREE.MeshBasicMaterial({ color: '#8d7655', transparent: true, opacity: 0.12 }))
+  shadow.rotation.x = -Math.PI / 2
+  shadow.position.y = -0.035
+  stage.add(shadow)
   resize()
   resizeObserver = new ResizeObserver(resize)
-  resizeObserver.observe(canvasHost.value)
+  resizeObserver.observe(hatHost.value)
+}
+function resize() {
+  if (!renderer || !hatHost.value) return
+  const w = hatHost.value.clientWidth
+  const h = hatHost.value.clientHeight
+  renderer.setSize(w, h, false)
+  camera.aspect = w / h
+  camera.updateProjectionMatrix()
+}
+function animate() {
+  raf = requestAnimationFrame(animate)
+  const t = performance.now() * 0.001
+  if (mainHat) {
+    mainHat.rotation.y += (targetRotation - mainHat.rotation.y) * 0.075
+    mainHat.rotation.x += (targetTilt - mainHat.rotation.x) * 0.075
+    mainHat.position.y = 0.12 + Math.sin(t * 1.1) * 0.055
+  }
+  sideHats.forEach((hat, i) => { hat.rotation.y += ((i === 0 ? -0.42 : 0.42) - hat.rotation.y) * 0.035 })
+  stage?.rotation.y && (stage.rotation.y += (pointerX * 0.035 - stage.rotation.y) * 0.025)
+  renderer?.render(scene, camera)
+}
+function changeHat(direction: number) {
+  selected.value = (selected.value + direction + hats.length) % hats.length
+  targetRotation += direction * Math.PI * 0.7
+  targetTilt = -0.22
+  ribbonIndex.value = ribbons.indexOf(hats[selected.value].ribbon)
+  if (ribbonIndex.value < 0) ribbonIndex.value = 0
+  if (mainHat) {
+    const next = makeHat(selected.value, 1)
+    next.position.copy(mainHat.position)
+    next.rotation.copy(mainHat.rotation)
+    stage.remove(mainHat)
+    mainHat.traverse(o => { if (o instanceof THREE.Mesh) { o.geometry.dispose(); if (Array.isArray(o.material)) o.material.forEach(m => m.dispose()); else o.material.dispose() } })
+    mainHat = next
+    stage.add(mainHat)
+    mainHat.rotation.y = targetRotation - direction * Math.PI * 0.7
+  }
+  if (sideHats.length) {
+    sideHats.forEach((h, i) => {
+      const nextIndex = (selected.value + (i === 0 ? -1 : 1) + hats.length) % hats.length
+      h.traverse(o => { if (o instanceof THREE.Mesh) { o.geometry.dispose(); if (Array.isArray(o.material)) o.material.forEach(m => m.dispose()); else o.material.dispose() } })
+      stage.remove(h)
+      const replacement = makeHat(nextIndex, 0.43)
+      replacement.position.set((i === 0 ? -1 : 1) * 3.15, 0.12, -0.9)
+      replacement.rotation.y = i === 0 ? 0.42 : -0.42
+      stage.add(replacement)
+      sideHats[i] = replacement
+    })
+  }
+}
+function setRibbon(index: number) {
+  ribbonIndex.value = index
+  if (!mainHat) return
+  const color = ribbons[index]
+  mainHat.children.forEach((child, i) => {
+    if ((child as THREE.Mesh).material instanceof THREE.MeshStandardMaterial && (i === 2 || i === 3)) {
+      const mesh = child as THREE.Mesh
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+      materials.forEach(m => (m as THREE.MeshStandardMaterial).color.set(color))
+    }
+  })
+}
+function pointerDown(e: PointerEvent) {
+  dragging = true; moved = false; lastX = e.clientX; lastY = e.clientY
+}
+function pointerMove(e: PointerEvent) {
+  pointerX = (e.clientX / window.innerWidth - 0.5) * 2
+  if (!dragging) return
+  const dx = e.clientX - lastX
+  const dy = e.clientY - lastY
+  if (Math.abs(dx) + Math.abs(dy) > 3) moved = true
+  if (moved) {
+    targetRotation += dx * 0.009
+    targetTilt = THREE.MathUtils.clamp(targetTilt + dy * 0.004, -0.65, 0.32)
+  }
+  lastX = e.clientX; lastY = e.clientY
+}
+function pointerUp() { dragging = false }
+function addToCart() {
+  cartCount.value += quantity.value
+  toast.value = 'Added to your summer collection'
+  window.setTimeout(() => { toast.value = '' }, 2300)
+}
+function openCart() { cartOpen.value = true }
+watch(selected, () => { quantity.value = 1 })
+onMounted(() => {
+  setupScene()
   animate()
+  window.addEventListener('pointerup', pointerUp)
+  window.addEventListener('pointermove', pointerMove)
+  hatHost.value?.addEventListener('pointerdown', pointerDown)
 })
 onBeforeUnmount(() => {
-  cancelAnimationFrame(animationId)
+  cancelAnimationFrame(raf)
   resizeObserver?.disconnect()
+  window.removeEventListener('pointerup', pointerUp)
+  window.removeEventListener('pointermove', pointerMove)
+  hatHost.value?.removeEventListener('pointerdown', pointerDown)
   renderer?.dispose()
   scene?.traverse(o => {
     if (o instanceof THREE.Mesh) {
       o.geometry.dispose()
-      const mats = Array.isArray(o.material) ? o.material : [o.material]
-      mats.forEach(m => m.dispose())
+      const materials = Array.isArray(o.material) ? o.material : [o.material]
+      materials.forEach(m => m.dispose())
     }
   })
 })
 </script>
 
 <template>
-  <main class="bakery-app" :class="{ 'underwater-mode': station === 'strawberry' }">
-    <div ref="canvasHost" class="scene-host"></div>
-    <div class="scene-wash"></div>
-    <header class="topbar">
-      <button class="brand" @click="setStation('studio')"><span class="brand-icon">B</span><span><b>BERRY <i>&</i> BREAD</b><small>THE LITTLE BAKERY STUDIO</small></span></button>
-      <div class="top-center"><span class="open-dot"></span> WORKSHOP OPEN <span class="top-divider">/</span> FRESH TODAY</div>
-      <button class="collection-btn" @click="setStation('table')">MY BREAKFAST <span>↗</span></button>
+  <main class="strawverse">
+    <div class="ambient-photo"></div>
+    <div class="grain"></div>
+    <header class="nav">
+      <a class="wordmark" href="#" @click.prevent="selected = 0"><span class="mark">S</span><span>STRAW<span class="wordmark-light">VERSE</span><small>THE SUMMER HAT ATELIER</small></span></a>
+      <nav class="nav-links"><a href="#collection">COLLECTION</a><a href="#craft">OUR CRAFT</a><a href="#story">THE SUMMER STORY</a></nav>
+      <button class="bag-button" @click="openCart"><span>YOUR BAG</span><i>{{ cartCount }}</i></button>
     </header>
 
-    <section class="hero-copy" v-if="station === 'studio'">
-      <div class="eyebrow"><span></span> A HANDMADE LITTLE WORLD</div>
-      <h1>Good things<br>take <em>a little</em><br>sweetness.</h1>
-      <p>Pick the berries. Make the jam.<br>Shape a toast. Create your morning.</p>
-      <button class="primary-cta" @click="setStation('blueberry')">ENTER THE KITCHEN <span>↗</span></button>
+    <section class="hero">
+      <div class="hero-copy">
+        <div class="kicker"><span class="kicker-line"></span> MADE FOR THE LONG WAY HOME</div>
+        <h1>Chase the<br><em>sun.</em> Keep<br>the feeling.</h1>
+        <p>Handwoven straw hats for wherever<br>the light takes you.</p>
+        <a class="discover" href="#collection">DISCOVER THE COLLECTION <span>↘</span></a>
+        <div class="hero-index"><b>01</b><span></span> THE SUMMER EDIT · 2026</div>
+      </div>
+
+      <div class="product-stage">
+        <div class="stage-sun"></div>
+        <div class="stage-label stage-label-top"><span>01 / 04</span><i>HANDWOVEN IN THE SUN</i></div>
+        <div ref="hatHost" class="hat-host" @pointerdown="pointerDown"></div>
+        <button class="stage-arrow stage-prev" aria-label="Previous hat" @click="changeHat(-1)">←</button>
+        <button class="stage-arrow stage-next" aria-label="Next hat" @click="changeHat(1)">→</button>
+        <div class="drag-note"><span>✳</span> DRAG TO TURN YOUR HAT</div>
+        <div class="stage-caption"><span>STRAWVERSE OBJECT No. {{ String(selected + 1).padStart(2, '0') }}</span><span>360° / HAND FINISHED</span></div>
+      </div>
+
+      <div class="product-info">
+        <div class="product-count">THE ATELIER COLLECTION <span>— 0{{ selected + 1 }} / 04</span></div>
+        <h2>{{ current.name }}</h2>
+        <div class="product-subtitle">{{ current.subtitle }}</div>
+        <p class="product-detail">{{ current.detail }}</p>
+        <div class="price-row"><strong>¥{{ current.price }}</strong><span>FREE SHIPPING OVER ¥499</span></div>
+        <div class="color-picker">
+          <div class="picker-title">CHOOSE YOUR RIBBON <span>{{ String(ribbonIndex + 1).padStart(2, '0') }} / 05</span></div>
+          <div class="swatches">
+            <button v-for="(color, i) in ribbons" :key="color" :style="{ background: color }" :class="{ active: ribbonIndex === i }" :aria-label="'Ribbon color ' + (i + 1)" @click="setRibbon(i)"></button>
+          </div>
+        </div>
+        <div class="buy-row">
+          <div class="quantity"><button @click="quantity = Math.max(1, quantity - 1)">−</button><span>{{ quantity }}</span><button @click="quantity++">+</button></div>
+          <button class="add-button" @click="addToCart">ADD TO BAG <span>↗</span></button>
+        </div>
+        <button class="custom-link" @click="customOpen = true">MAKE IT YOURS <span>PERSONALISE YOUR HAT ↗</span></button>
+        <div class="promise"><span>✳</span> NATURAL FIBRES <span>✳</span> HAND FINISHED <span>✳</span> MADE TO LAST</div>
+      </div>
     </section>
 
-    <section class="workshop-copy" v-else>
-      <div class="eyebrow"><span></span> BERRY & BREAD WORKSHOP</div>
-      <h1>{{ station === 'blueberry' ? 'Blueberry' : station === 'strawberry' ? 'Strawberry' : station === 'toast' ? 'Toast shape' : station === 'decorate' ? 'Jam art' : 'Breakfast' }} <em>{{ station === 'toast' ? 'studio.' : station === 'decorate' ? 'studio.' : 'lab.' }}</em></h1>
-      <p>{{ stageTitle }}</p>
-      <div class="progress-note" v-if="station === 'blueberry' || station === 'strawberry'">
-        <span>{{ station === 'blueberry' ? berries : strawberries }} INGREDIENTS PICKED</span>
-        <span>{{ jamAmount }}% JAM</span>
+    <section id="collection" class="collection-strip">
+      <div class="strip-heading"><span>FIND YOUR SHADE</span><i>FOUR SHAPES. ENDLESS SUMMERS.</i></div>
+      <div class="mini-products">
+        <button v-for="(hat, i) in hats" :key="hat.name" class="mini-product" :class="{ active: selected === i }" @click="changeHat(i - selected)">
+          <span class="mini-hat" :style="{ '--hat-color': hat.color, '--ribbon-color': hat.ribbon }"><i></i></span>
+          <span class="mini-name">{{ hat.name }}</span><span class="mini-price">¥{{ hat.price }}</span>
+        </button>
       </div>
-      <div class="progress-track" v-if="station === 'blueberry' || station === 'strawberry'"><i :style="{width: jamAmount + '%'}"></i></div>
-      <div class="toast-choice" v-if="station === 'toast' || station === 'decorate'">
-        <button @click="nextToast(-1)">←</button><span>{{ currentToast }} TOAST</span><button @click="nextToast(1)">→</button>
-      </div>
+      <a class="all-products" href="#craft">EXPLORE THE ATELIER <span>↗</span></a>
     </section>
 
-    <div class="hint-pill"><span class="hint-dot"></span>{{ hint }}</div>
+    <section id="craft" class="craft-note">
+      <div class="craft-number">A LITTLE<br>ABOUT THE<br>WEAVE.</div>
+      <div class="craft-copy"><span>THE ART OF SLOW SUMMER</span><h3>Not just a hat.<br><em>A place in the sun.</em></h3></div>
+      <p>Each STRAWVERSE piece begins with natural fibres, patient hands and a belief that the best things are never rushed. Find the shape that feels like you. Then take it somewhere beautiful.</p>
+      <a id="story" href="#collection">OUR MAKING STORY ↗</a>
+    </section>
 
-    <aside class="right-tools" v-if="station !== 'studio'">
-      <div class="tools-head"><small>YOUR WORKBENCH</small><span>✳</span></div>
-      <div class="tool-item" :class="{selected: station === 'blueberry'}" @click="setStation('blueberry')"><span class="tool-thumb blueberry-thumb"></span><span><b>Blueberries</b><small>{{ berries }} picked</small></span><i>01</i></div>
-      <div class="tool-item" :class="{selected: station === 'strawberry'}" @click="setStation('strawberry')"><span class="tool-thumb strawberry-thumb"></span><span><b>Strawberries</b><small>{{ strawberries }} picked</small></span><i>02</i></div>
-      <div class="tool-item" :class="{selected: station === 'toast'}" @click="setStation('toast')"><span class="tool-thumb toast-thumb"></span><span><b>Toast shapes</b><small>{{ currentToast.toLowerCase() }} selected</small></span><i>03</i></div>
-      <div class="tool-item" :class="{selected: station === 'decorate'}" @click="setStation('decorate')"><span class="tool-thumb jam-thumb"></span><span><b>Jam & decorate</b><small>{{ jamAmount }}% spread</small></span><i>04</i></div>
-      <div class="tool-item" :class="{selected: station === 'table'}" @click="setStation('table')"><span class="tool-thumb table-thumb"></span><span><b>Breakfast table</b><small>final creation</small></span><i>05</i></div>
-      <div class="tool-actions">
-        <button @click="station === 'decorate' ? spreadJam() : (jamMade = true, jamAmount = Math.min(100, jamAmount + 25), hint = 'Stirring the jam…')">{{ station === 'decorate' ? 'SPREAD JAM' : 'MAKE JAM' }} <span>↗</span></button>
-        <button class="soft-action" @click="saved = !saved">{{ saved ? 'SAVED TO BOOK' : 'SAVE CREATION' }} <span>{{ saved ? '✓' : '♡' }}</span></button>
+    <footer class="footer"><span>STRAWVERSE © 2026</span><span>WOVEN FOR THE SUNLIT DAYS</span><span>MADE WITH A LITTLE MORE SUNSHINE ☼</span></footer>
+
+    <Transition name="toast"><div v-if="toast" class="toast-message">✳ {{ toast }}</div></Transition>
+    <Transition name="overlay">
+      <div v-if="cartOpen" class="drawer-backdrop" @click.self="cartOpen = false">
+        <aside class="drawer"><button class="drawer-close" @click="cartOpen = false">×</button><span class="kicker">YOUR SUMMER EDIT</span><h3>Your bag<span>.</span></h3><div class="drawer-item"><span class="drawer-hat">◒</span><div><b>{{ current.name }}</b><small>{{ current.subtitle }}</small><strong>¥{{ current.price }} × {{ cartCount || 0 }}</strong></div></div><div class="drawer-total"><span>SUBTOTAL</span><b>¥{{ current.price * cartCount }}</b></div><button class="checkout" @click="cartOpen = false">CONTINUE EXPLORING ↗</button><p class="drawer-footnote">A little sunshine is on its way.</p></aside>
       </div>
-    </aside>
-
-    <div class="bottom-bar">
-      <div class="bottom-caption"><span class="tiny-sun">✳</span><span><b>{{ station === 'studio' ? 'THE MORNING IS YOURS' : station.toUpperCase() }}</b><small>TAKE YOUR TIME · MAKE IT YOURS</small></span></div>
-      <nav class="station-nav">
-        <button :class="{active:station==='blueberry'}" @click="setStation('blueberry')"><span>01</span> JAM LAB</button>
-        <button :class="{active:station==='strawberry'}" @click="setStation('strawberry')"><span>02</span> FRUIT LAB</button>
-        <button :class="{active:station==='toast'}" @click="setStation('toast')"><span>03</span> TOAST STUDIO</button>
-        <button :class="{active:station==='decorate'}" @click="setStation('decorate')"><span>04</span> JAM ART</button>
-        <button :class="{active:station==='table'}" @click="setStation('table')"><span>05</span> BREAKFAST</button>
-      </nav>
-      <button class="sound-btn" @click="hint='Listen to the quiet sounds of a little bakery.'">♫ <span>SOUND</span></button>
-    </div>
-    <div class="made-stamp" v-if="station === 'table'"><span>✳</span><b>MADE WITH A LITTLE LOVE</b><small>YOUR VERY OWN BREAKFAST</small></div>
-    <div class="toast-confirm" v-if="toastDone && station === 'toast'">A lovely {{ currentToast.toLowerCase() }} toast. <button @click="setStation('decorate')">DECORATE IT ↗</button></div>
+    </Transition>
+    <Transition name="overlay">
+      <div v-if="customOpen" class="modal-backdrop" @click.self="customOpen = false">
+        <div class="custom-modal"><button class="drawer-close" @click="customOpen = false">×</button><span class="kicker">THE PERSONAL TOUCH</span><h3>Make it <em>yours.</em></h3><p>Choose your ribbon above, turn your hat in the light, and find the angle that feels like summer. Every piece is finished by hand.</p><button class="checkout" @click="customOpen = false">BACK TO MY HAT ↗</button></div>
+      </div>
+    </Transition>
   </main>
 </template>
