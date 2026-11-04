@@ -268,7 +268,8 @@ function pointerMove(e: PointerEvent) {
       const step = Math.round(dx / 100)
       if (step !== 0) { focusToast(toastIndex.value - step); downX = e.clientX }
     } else {
-      world.rotation.y += dx * 0.003
+      if (station.value === 'strawberry' && underwater) underwater.root.rotation.y += dx * 0.003
+      else world.rotation.y += dx * 0.003
       camera.position.y = THREE.MathUtils.clamp(camera.position.y - dy * 0.006, 3.7, 7)
       camera.lookAt(0, 1.1, 0)
       downX = e.clientX; downY = e.clientY
